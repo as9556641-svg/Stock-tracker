@@ -10,6 +10,13 @@ const stockRoutes = require("./src/routes/stockRoutes");
 
 const app = express();
 const PORT = process.env.PORT || 5000;
+const requiredEnvVars = ["MONGO_URI", "JWT_SECRET"];
+
+const missingEnvVars = requiredEnvVars.filter((envVar) => !process.env[envVar]);
+
+if (missingEnvVars.length) {
+  throw new Error(`Missing required environment variables: ${missingEnvVars.join(", ")}`);
+}
 
 app.use(
   cors({
