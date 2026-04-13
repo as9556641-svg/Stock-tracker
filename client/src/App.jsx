@@ -2,9 +2,9 @@ import { Navigate, Route, Routes } from "react-router-dom";
 
 import ProtectedRoute from "./components/ProtectedRoute";
 import DashboardPage from "./pages/DashboardPage";
-import LoginPage from "./pages/LoginPage";
 import ProfilePage from "./pages/ProfilePage";
-import SignupPage from "./pages/SignupPage";
+import Login from "./pages/Login";
+import Register from "./pages/Register";
 import { useAuth } from "./context/AuthContext";
 
 function App() {
@@ -13,8 +13,9 @@ function App() {
   return (
     <Routes>
       <Route path="/" element={<Navigate to={token ? "/dashboard" : "/login"} replace />} />
-      <Route path="/login" element={<LoginPage />} />
-      <Route path="/signup" element={<SignupPage />} />
+      <Route path="/login" element={<Login />} />
+      <Route path="/signup" element={<Register />} />
+      <Route path="/register" element={<Register />} />
       <Route
         path="/dashboard"
         element={
