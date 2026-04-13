@@ -20,17 +20,35 @@ if (missingEnvVars.length) {
 
 app.use(
   cors({
-    origin: process.env.CLIENT_URL || "http://localhost:5173"
+    origin: (origin, callback) => {
+      const allowedOrigins = (process.env.CLIENT_URL || "http://localhost:5173")
+        .split(",")
+        .map((item) => item.trim())
+        .filter(Boolean);
+
+      if (!origin || allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+
+      return callback(new Error("Not allowed by CORS"));
+    },
+    credentials: true
   })
 );
 app.use(express.json());
 
 app.get("/", (req, res) => {
-  res.json({ message: "Express MongoDB auth API is running" });
+  res.status(200).json({
+    success: true,
+    message: "Express MongoDB auth API is running"
+  });
 });
 
 app.get("/api/health", (req, res) => {
-  res.json({ status: "ok" });
+  res.status(200).json({
+    success: true,
+    status: "ok"
+  });
 });
 
 app.use("/api/auth", authRoutes);
@@ -38,7 +56,23 @@ app.use("/api/market", marketRoutes);
 app.use("/api/stocks", stockRoutes);
 
 app.use((req, res) => {
-  res.status(404).json({ message: "Route not found" });
+  res.status(404).json({
+    success: false,
+    message: "Route not found"
+  });
+});
+
+app.use((error, req, res, next) => {
+  console.error("Unhandled error:", error.message);
+
+  if (res.headersSent) {
+    return next(error);
+  }
+
+  return res.status(500).json({
+    success: false,
+    message: error.message || "Internal server error"
+  });
 });
 
 const startServer = async () => {
@@ -55,3 +89,5 @@ const startServer = async () => {
 };
 
 startServer();
+
+module.exports = app;

@@ -1,11 +1,19 @@
 const express = require("express");
 
-const { signup, login, getProfile, updateProfile } = require("../controllers/authController");
+const { register, login, getProfile, updateProfile } = require("../controllers/authController");
 const authMiddleware = require("../middleware/auth");
 
 const router = express.Router();
 
-router.post("/signup", signup);
+router.get("/", (req, res) => {
+  res.status(200).json({
+    success: true,
+    message: "Auth route is working"
+  });
+});
+
+router.post("/register", register);
+router.post("/signup", register);
 router.post("/login", login);
 router.get("/profile", authMiddleware, getProfile);
 router.put("/profile", authMiddleware, updateProfile);

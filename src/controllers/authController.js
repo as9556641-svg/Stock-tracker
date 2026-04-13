@@ -3,43 +3,70 @@ const jwt = require("jsonwebtoken");
 
 const User = require("../models/User");
 
-const generateToken = (userId) =>
-  jwt.sign({ id: userId }, process.env.JWT_SECRET, { expiresIn: "7d" });
+const generateToken = (userId) => {
+  if (!process.env.JWT_SECRET) {
+    throw new Error("JWT_SECRET is not configured");
+  }
 
-const signup = async (req, res) => {
+  return jwt.sign({ id: userId }, process.env.JWT_SECRET, { expiresIn: "7d" });
+};
+
+const buildAuthResponse = (user, message) => ({
+  success: true,
+  message,
+  token: generateToken(user._id),
+  user: {
+    id: user._id,
+    name: user.name,
+    email: user.email
+  }
+});
+
+const register = async (req, res) => {
   try {
     const { name, email, password } = req.body;
+    const normalizedName = name?.trim();
     const normalizedEmail = email?.toLowerCase().trim();
 
-    if (!name || !email || !password) {
-      return res.status(400).json({ message: "Name, email, and password are required" });
+    if (!normalizedName || !normalizedEmail || !password) {
+      return res.status(400).json({
+        success: false,
+        message: "Name, email, and password are required"
+      });
+    }
+
+    if (password.length < 6) {
+      return res.status(400).json({
+        success: false,
+        message: "Password must be at least 6 characters long"
+      });
     }
 
     const existingUser = await User.findOne({ email: normalizedEmail });
 
     if (existingUser) {
-      return res.status(400).json({ message: "User already exists" });
+      return res.status(409).json({
+        success: false,
+        message: "User already exists"
+      });
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);
 
     const user = await User.create({
-      name: name.trim(),
+      name: normalizedName,
       email: normalizedEmail,
       password: hashedPassword
     });
 
-    return res.status(201).json({
-      message: "User created successfully",
-      token: generateToken(user._id),
-      user: {
-        id: user._id,
-        name: user.name,
-        email: user.email
-      }
-    });
+    return res.status(201).json(buildAuthResponse(user, "User registered successfully"));
   } catch (error) {
-    return res.status(500).json({ message: "Server error during signup" });
+    console.error("Register error:", error.message);
+
+    return res.status(500).json({
+      success: false,
+      message: "Server error during registration"
+    });
   }
 };
 
@@ -48,33 +75,39 @@ const login = async (req, res) => {
     const { email, password } = req.body;
     const normalizedEmail = email?.toLowerCase().trim();
 
-    if (!email || !password) {
-      return res.status(400).json({ message: "Email and password are required" });
+    if (!normalizedEmail || !password) {
+      return res.status(400).json({
+        success: false,
+        message: "Email and password are required"
+      });
     }
 
     const user = await User.findOne({ email: normalizedEmail });
 
     if (!user) {
-      return res.status(401).json({ message: "Invalid credentials" });
+      return res.status(401).json({
+        success: false,
+        message: "Invalid email or password"
+      });
     }
 
     const isPasswordValid = await bcrypt.compare(password, user.password);
 
     if (!isPasswordValid) {
-      return res.status(401).json({ message: "Invalid credentials" });
+      return res.status(401).json({
+        success: false,
+        message: "Invalid email or password"
+      });
     }
 
-    return res.status(200).json({
-      message: "Login successful",
-      token: generateToken(user._id),
-      user: {
-        id: user._id,
-        name: user.name,
-        email: user.email
-      }
-    });
+    return res.status(200).json(buildAuthResponse(user, "Login successful"));
   } catch (error) {
-    return res.status(500).json({ message: "Server error during login" });
+    console.error("Login error:", error.message);
+
+    return res.status(500).json({
+      success: false,
+      message: "Server error during login"
+    });
   }
 };
 
@@ -83,22 +116,37 @@ const getProfile = async (req, res) => {
     const user = await User.findById(req.user.id).select("-password");
 
     if (!user) {
-      return res.status(404).json({ message: "User not found" });
+      return res.status(404).json({
+        success: false,
+        message: "User not found"
+      });
     }
 
-    return res.status(200).json(user);
+    return res.status(200).json({
+      success: true,
+      user
+    });
   } catch (error) {
-    return res.status(500).json({ message: "Server error while fetching profile" });
+    console.error("Get profile error:", error.message);
+
+    return res.status(500).json({
+      success: false,
+      message: "Server error while fetching profile"
+    });
   }
 };
 
 const updateProfile = async (req, res) => {
   try {
     const { name, email } = req.body;
+    const normalizedName = name?.trim();
     const normalizedEmail = email?.toLowerCase().trim();
 
-    if (!name || !email) {
-      return res.status(400).json({ message: "Name and email are required" });
+    if (!normalizedName || !normalizedEmail) {
+      return res.status(400).json({
+        success: false,
+        message: "Name and email are required"
+      });
     }
 
     const existingUser = await User.findOne({
@@ -107,28 +155,48 @@ const updateProfile = async (req, res) => {
     });
 
     if (existingUser) {
-      return res.status(400).json({ message: "Email is already in use" });
+      return res.status(409).json({
+        success: false,
+        message: "Email is already in use"
+      });
     }
 
     const user = await User.findByIdAndUpdate(
       req.user.id,
       {
-        name: name.trim(),
+        name: normalizedName,
         email: normalizedEmail
       },
       {
-        new: true
+        new: true,
+        runValidators: true
       }
     ).select("-password");
 
-    return res.status(200).json(user);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found"
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "Profile updated successfully",
+      user
+    });
   } catch (error) {
-    return res.status(500).json({ message: "Server error while updating profile" });
+    console.error("Update profile error:", error.message);
+
+    return res.status(500).json({
+      success: false,
+      message: "Server error while updating profile"
+    });
   }
 };
 
 module.exports = {
-  signup,
+  register,
   login,
   getProfile,
   updateProfile

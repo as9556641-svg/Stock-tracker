@@ -17,21 +17,23 @@ const applyAtlasDnsFallback = (mongoUri) => {
 };
 
 const connectDB = async () => {
-  try {
-    if (!process.env.MONGO_URI) {
-      throw new Error("MONGO_URI is missing in the .env file");
-    }
-
-    applyAtlasDnsFallback(process.env.MONGO_URI);
-
-    await mongoose.connect(process.env.MONGO_URI, {
-      serverSelectionTimeoutMS: 10000
-    });
-    console.log("MongoDB connected");
-  } catch (error) {
-    console.error("MongoDB connection failed:", error.message);
-    process.exit(1);
+  if (!process.env.MONGO_URI) {
+    throw new Error("MONGO_URI is missing");
   }
+
+  if (mongoose.connection.readyState === 1) {
+    return mongoose.connection;
+  }
+
+  applyAtlasDnsFallback(process.env.MONGO_URI);
+
+  const connection = await mongoose.connect(process.env.MONGO_URI, {
+    serverSelectionTimeoutMS: 10000
+  });
+
+  console.log("MongoDB connected");
+
+  return connection;
 };
 
 module.exports = connectDB;
