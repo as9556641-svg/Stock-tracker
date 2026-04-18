@@ -1,5 +1,20 @@
+const normalizeStockSymbol = (symbol) => {
+  const normalizedSymbol = symbol?.trim().toUpperCase();
+
+  if (!normalizedSymbol) {
+    throw new Error("Stock symbol is required");
+  }
+
+  if (!/^[A-Z][A-Z0-9.-]{0,9}$/.test(normalizedSymbol)) {
+    throw new Error("Enter a valid uppercase stock symbol like AAPL or TATA");
+  }
+
+  return normalizedSymbol;
+};
+
 const getQuoteFromAlphaVantage = async (symbol) => {
-  const apiKey = process.env.ALPHA_VANTAGE_API_KEY;
+  const apiKey = process.env.ALPHA_VANTAGE_API_KEY || process.env.ALPHA_API_KEY;
+  const normalizedSymbol = normalizeStockSymbol(symbol);
 
   if (!apiKey) {
     throw new Error("Missing ALPHA_VANTAGE_API_KEY");
@@ -7,7 +22,7 @@ const getQuoteFromAlphaVantage = async (symbol) => {
 
   const query = new URLSearchParams({
     function: "GLOBAL_QUOTE",
-    symbol,
+    symbol: normalizedSymbol,
     apikey: apiKey
   });
 
@@ -36,7 +51,7 @@ const getQuoteFromAlphaVantage = async (symbol) => {
   }
 
   return {
-    symbol: quote["01. symbol"] || symbol.toUpperCase(),
+    symbol: quote["01. symbol"] || normalizedSymbol,
     price,
     previousClose: Number.parseFloat(quote["08. previous close"] || "0"),
     changePercent: quote["10. change percent"] || "0%",
@@ -45,5 +60,6 @@ const getQuoteFromAlphaVantage = async (symbol) => {
 };
 
 module.exports = {
-  getQuoteFromAlphaVantage
+  getQuoteFromAlphaVantage,
+  normalizeStockSymbol
 };

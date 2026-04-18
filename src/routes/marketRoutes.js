@@ -7,5 +7,6 @@ const router = express.Router();
 
 router.use(authMiddleware);
 router.get("/quote/:symbol", getStockQuote);
+router.get("/price/:symbol", getStockQuote);
 
 module.exports = router;

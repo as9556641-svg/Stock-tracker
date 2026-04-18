@@ -7,6 +7,7 @@ const connectDB = require("./src/config/db");
 const authRoutes = require("./src/routes/authRoutes");
 const marketRoutes = require("./src/routes/marketRoutes");
 const stockRoutes = require("./src/routes/stockRoutes");
+const { getStockPrice } = require("./src/controllers/marketController");
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -27,7 +28,9 @@ if (missingEnvVars.length) {
 
 const corsOptions = {
   origin: (origin, callback) => {
-    if (!origin || allowedOrigins.includes(origin)) {
+    const isAllowedVercelPreview = typeof origin === "string" && origin.endsWith(".vercel.app");
+
+    if (!origin || allowedOrigins.includes(origin) || isAllowedVercelPreview) {
       return callback(null, true);
     }
 
@@ -57,8 +60,12 @@ app.get("/api/health", (req, res) => {
   });
 });
 
+app.get("/api/stock-price/:symbol", getStockPrice);
+
 app.use("/api/auth", authRoutes);
 app.use("/api/market", marketRoutes);
+app.use("/api/stock", marketRoutes);
+app.use("/api/portfolio", stockRoutes);
 app.use("/api/stocks", stockRoutes);
 
 app.use((req, res) => {

@@ -14,6 +14,7 @@ const router = express.Router();
 
 router.use(authMiddleware);
 
+router.get("/portfolio", getStocks);
 router.get("/transactions", getTransactions);
 router.get("/", getStocks);
 router.post("/", addStock);

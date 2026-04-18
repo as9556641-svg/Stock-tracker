@@ -1,6 +1,6 @@
 const Stock = require("../models/Stock");
 const Transaction = require("../models/Transaction");
-const { getQuoteFromAlphaVantage } = require("../services/marketService");
+const { getQuoteFromAlphaVantage, normalizeStockSymbol } = require("../services/marketService");
 
 const recordTransaction = async ({
   userId,
@@ -47,17 +47,18 @@ const addStock = async (req, res) => {
       });
     }
 
+    const normalizedSymbol = normalizeStockSymbol(symbol);
     let currentPrice = Number(price);
 
     if (price === undefined || Number.isNaN(currentPrice)) {
-      const quote = await getQuoteFromAlphaVantage(symbol.trim().toUpperCase());
+      const quote = await getQuoteFromAlphaVantage(normalizedSymbol);
       currentPrice = quote.price;
     }
 
     const newStock = await Stock.create({
       user: req.user.id,
       name: name.trim(),
-      symbol: symbol.trim().toUpperCase(),
+      symbol: normalizedSymbol,
       quantity: Number(quantity),
       price: currentPrice,
       averageCost: Number(averageCost),

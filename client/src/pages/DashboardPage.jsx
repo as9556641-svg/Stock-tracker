@@ -1,9 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 
-import api from "../api/axios";
+import api, { getApiErrorMessage, retryRequest, stockApi } from "../api/axios";
 import Alert from "../components/Alert";
 import ConfirmModal from "../components/ConfirmModal";
 import ExportButtons from "../components/ExportButtons";
@@ -19,11 +19,14 @@ import { useAuth } from "../context/AuthContext";
 import { useNotifications } from "../context/NotificationContext";
 import { formatCurrency, formatDateTime, formatNumber, formatSignedCurrency } from "../utils/formatters";
 
+const SYMBOL_PATTERN = /^[A-Z][A-Z0-9.-]{0,9}$/;
+
 function DashboardPage() {
   const [stocks, setStocks] = useState([]);
   const [transactions, setTransactions] = useState([]);
   const [formData, setFormData] = useState(StockForm.initialValues);
   const [loading, setLoading] = useState(true);
+  const [loadingMessage, setLoadingMessage] = useState("Loading your portfolio...");
   const [submitting, setSubmitting] = useState(false);
   const [deletingId, setDeletingId] = useState("");
   const [refreshingId, setRefreshingId] = useState("");
@@ -31,10 +34,14 @@ function DashboardPage() {
   const [isLogoutModalOpen, setIsLogoutModalOpen] = useState(false);
   const [quoteLoading, setQuoteLoading] = useState(false);
   const [quoteError, setQuoteError] = useState("");
+  const [symbolError, setSymbolError] = useState("");
+  const [formSuccess, setFormSuccess] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
   const [performanceFilter, setPerformanceFilter] = useState("ALL");
   const [editingStock, setEditingStock] = useState(null);
   const [savingEdit, setSavingEdit] = useState(false);
+  const [allowManualPrice, setAllowManualPrice] = useState(false);
+  const quoteRequestRef = useRef(0);
 
   const navigate = useNavigate();
   const { user, logout } = useAuth();
@@ -43,20 +50,48 @@ function DashboardPage() {
   const fetchPortfolioData = async () => {
     try {
       setLoading(true);
+      setLoadingMessage("Loading your portfolio...");
       setError("");
 
-      const [stocksResponse, transactionsResponse] = await Promise.all([
-        api.get("/stocks"),
-        api.get("/stocks/transactions")
-      ]);
+      const [stocksResponse, transactionsResponse] = await retryRequest(
+        () =>
+          Promise.all([
+            api.get("/stocks"),
+            api.get("/stocks/transactions")
+          ]),
+        {
+          retries: 2,
+          retryDelayMs: 3000,
+          shouldRetry: (requestError, attempt) => {
+            const status = requestError.response?.status;
+            const retryableStatus = !status || status >= 500 || status === 429;
+
+            if (retryableStatus && attempt === 0) {
+              setLoadingMessage("Waking up the server and retrying...");
+            }
+
+            return retryableStatus;
+          }
+        }
+      );
 
       setStocks(stocksResponse.data);
       setTransactions(transactionsResponse.data);
     } catch (requestError) {
-      setError(requestError.response?.data?.message || "Unable to load portfolio data.");
-      addToast("Unable to load portfolio data", "error");
+      const status = requestError.response?.status;
+      const message =
+        status === 401
+          ? "Your session expired. Please log in again."
+          : getApiErrorMessage(
+              requestError,
+              "Unable to load portfolio data. The server may still be waking up."
+            );
+
+      setError(message);
+      addToast(message, "error");
     } finally {
       setLoading(false);
+      setLoadingMessage("Loading your portfolio...");
     }
   };
 
@@ -87,45 +122,122 @@ function DashboardPage() {
   }, [performanceFilter, searchTerm, stocks]);
 
   const handleChange = (event) => {
-    setFormData((current) => ({ ...current, [event.target.name]: event.target.value }));
+    const { name, value } = event.target;
+
+    if (name === "symbol") {
+      const normalizedValue = value.toUpperCase().replace(/[^A-Z0-9.-]/g, "");
+
+      setFormData((current) => ({
+        ...current,
+        symbol: normalizedValue,
+        price: ""
+      }));
+      setAllowManualPrice(false);
+      setFormSuccess("");
+
+      if (!normalizedValue) {
+        setSymbolError("");
+        setQuoteError("");
+        return;
+      }
+
+      if (!SYMBOL_PATTERN.test(normalizedValue)) {
+        setSymbolError("Use uppercase letters and numbers only, like AAPL or TATA");
+        setQuoteError("");
+        return;
+      }
+
+      setSymbolError("");
+      setQuoteError("");
+      return;
+    }
+
+    setFormData((current) => ({ ...current, [name]: value }));
+    setFormSuccess("");
   };
 
   const handleReset = () => {
     setFormData(StockForm.initialValues);
     setQuoteError("");
+    setSymbolError("");
+    setFormSuccess("");
+    setAllowManualPrice(false);
   };
 
   const handleFetchQuote = async () => {
-    if (!formData.symbol.trim()) {
+    const normalizedSymbol = formData.symbol.trim().toUpperCase();
+
+    if (!normalizedSymbol) {
       setQuoteError("Enter a stock symbol first");
       return null;
     }
 
+    if (!SYMBOL_PATTERN.test(normalizedSymbol)) {
+      const message = "Use a valid uppercase stock symbol like AAPL or TATA";
+      setSymbolError(message);
+      setQuoteError(message);
+      return null;
+    }
+
+    const requestId = quoteRequestRef.current + 1;
+    quoteRequestRef.current = requestId;
+
     try {
       setQuoteLoading(true);
       setQuoteError("");
-      const response = await api.get(`/market/quote/${formData.symbol.trim().toUpperCase()}`);
+      setSymbolError("");
+      setAllowManualPrice(false);
+      const response = await stockApi.getLivePrice(normalizedSymbol);
+
+      if (quoteRequestRef.current !== requestId) {
+        return null;
+      }
+
       setFormData((current) => ({
         ...current,
-        symbol: response.data.symbol,
-        price: String(response.data.price)
+        symbol: normalizedSymbol,
+        price: String(response.data.price),
+        name: current.name || normalizedSymbol
       }));
-      addToast(`Fetched live price for ${response.data.symbol}`);
       return response.data;
     } catch (requestError) {
-      const message = requestError.response?.data?.message || "Unable to fetch live stock price.";
+      if (quoteRequestRef.current !== requestId) {
+        return null;
+      }
+
+      const message = getApiErrorMessage(requestError, "Unable to fetch live stock price.");
       setQuoteError(message);
-      addToast(message, "error");
+      setAllowManualPrice(true);
       return null;
     } finally {
-      setQuoteLoading(false);
+      if (quoteRequestRef.current === requestId) {
+        setQuoteLoading(false);
+      }
     }
   };
+
+  useEffect(() => {
+    if (!formData.symbol || symbolError) {
+      return undefined;
+    }
+
+    const timer = setTimeout(() => {
+      handleFetchQuote();
+    }, 700);
+
+    return () => clearTimeout(timer);
+  }, [formData.symbol, symbolError]);
 
   const handleAddStock = async (event) => {
     event.preventDefault();
     setSubmitting(true);
     setError("");
+    setFormSuccess("");
+
+    if (symbolError) {
+      setSubmitting(false);
+      return;
+    }
 
     try {
       const quote = !formData.price ? await handleFetchQuote() : null;
@@ -138,9 +250,10 @@ function DashboardPage() {
 
       handleReset();
       await fetchPortfolioData();
+      setFormSuccess(`Added ${formData.symbol.toUpperCase()} to your portfolio.`);
       addToast("Stock added");
     } catch (requestError) {
-      const message = requestError.response?.data?.message || "Unable to add stock.";
+      const message = getApiErrorMessage(requestError, "Unable to add stock.");
       setError(message);
       addToast(message, "error");
     } finally {
@@ -156,7 +269,7 @@ function DashboardPage() {
       await fetchPortfolioData();
       addToast("Stock deleted");
     } catch (requestError) {
-      const message = requestError.response?.data?.message || "Unable to delete stock.";
+      const message = getApiErrorMessage(requestError, "Unable to delete stock.");
       setError(message);
       addToast(message, "error");
     } finally {
@@ -171,7 +284,7 @@ function DashboardPage() {
       await fetchPortfolioData();
       addToast("Live stock price updated");
     } catch (requestError) {
-      addToast(requestError.response?.data?.message || "Unable to refresh stock price.", "error");
+      addToast(getApiErrorMessage(requestError, "Unable to refresh stock price."), "error");
     } finally {
       setRefreshingId("");
     }
@@ -185,7 +298,7 @@ function DashboardPage() {
       await fetchPortfolioData();
       addToast("Stock updated");
     } catch (requestError) {
-      addToast(requestError.response?.data?.message || "Unable to update stock.", "error");
+      addToast(getApiErrorMessage(requestError, "Unable to update stock."), "error");
     } finally {
       setSavingEdit(false);
     }
@@ -302,6 +415,16 @@ function DashboardPage() {
   };
 
   const profitLossTone = profitLoss > 0 ? "success" : profitLoss < 0 ? "danger" : "default";
+  const isFormInvalid =
+    loading ||
+    submitting ||
+    quoteLoading ||
+    Boolean(symbolError) ||
+    !formData.name.trim() ||
+    !formData.symbol.trim() ||
+    !formData.quantity ||
+    !formData.averageCost ||
+    !formData.price;
 
   return (
     <div className="min-h-screen">
@@ -345,14 +468,18 @@ function DashboardPage() {
 
         <section className="mt-10 grid items-start gap-8 xl:grid-cols-[400px_minmax(0,1fr)]">
           <StockForm
+            disableSubmit={isFormInvalid}
             formData={formData}
+            formSuccess={formSuccess}
             loading={submitting}
             onChange={handleChange}
             onFetchQuote={handleFetchQuote}
             onReset={handleReset}
             onSubmit={handleAddStock}
+            priceReadOnly={!allowManualPrice}
             quoteError={quoteError}
             quoteLoading={quoteLoading}
+            symbolError={symbolError}
           />
 
           <div className="space-y-6">
@@ -395,7 +522,7 @@ function DashboardPage() {
 
             {loading ? (
               <div className="panel p-10">
-                <LoadingSpinner label="Loading your portfolio..." />
+                <LoadingSpinner label={loadingMessage} />
               </div>
             ) : filteredStocks.length === 0 ? (
               <div className="panel p-10 text-center">
